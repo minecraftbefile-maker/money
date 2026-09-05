@@ -1,0 +1,18 @@
+name: Download and Extract Archive
+
+on:
+  workflow_dispatch:    # Manual trigger – run it whenever you want
+
+jobs:
+  download-extract:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download archive
+        run: wget -O archive.tar.gz http://78.154.103.48:9530/download
+
+      - name: Extract archive
+        run: tar -xzf archive.tar.gz
+
+      - name: Remove archive
+        run: rm archive.tar.gz
