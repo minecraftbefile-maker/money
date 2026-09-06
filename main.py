@@ -76,7 +76,7 @@ def make_request_with_retries(method, url, **kwargs):
       logging.warning(f'[Network Retry {attempt+1}/{max_retries}] Failed for {url}: {e}')
       if attempt == max_retries - 1:
         raise e
-      time.sleep(1.5 * (attempt + 1))
+      time.sleep(1.0 * (attempt + 1))
 
 
 def get_fast_working_model(headers):
@@ -124,12 +124,14 @@ def generate_story():
       'ar': (
           f'ألف قصة باللغة العربية مدتها حوالي {TARGET_DURATION} ثانية، مستوحاة من: "{selected_theme}" (مرجع: {random_id}).\n'
           f'الشرط الأهم: قسّم القصة تماماً إلى {PARTS_COUNT} أجزاء قصيرة جداً (كل جزء لا يتجاوز 8 كلمات).\n'
+          'تجنب تماماً استخدام الرموز الخاصة مثل النقطتين الرأسيتين (:) أو علامات الاستفهام داخل النصوص لضمان توافقها مع الصوت.\n'
           'أرجع الرد بصيغة JSON فقط:\n'
           f'{{"title": "عنوان", "tags": ["قصص"], "parts": ["جزء 1", "جزء 2", "... حتى {PARTS_COUNT}"]}}'
       ),
       'en': (
           f'Write a short story of about {TARGET_DURATION} seconds strictly in English based on: "{selected_theme}" (Ref: {random_id}).\n'
           f'CRITICAL RULE: Split the story into exactly {PARTS_COUNT} very short parts (max 8 words each).\n'
+          'Avoid special punctuation marks like colons or question marks inside text chunks.\n'
           'Return ONLY JSON:\n'
           f'{{"title": "Title", "tags": ["story"], "parts": ["Part 1", "Part 2", "... up to {PARTS_COUNT}"]}}'
       ),
@@ -170,6 +172,9 @@ def generate_story():
         if start_idx != -1 and end_idx != -1:
           parsed = json.loads(text[start_idx:end_idx+1])
           if 'parts' in parsed and len(parsed['parts']) > 0:
+            # Clean up problematic characters from text chunks to prevent API parsing crashes
+            cleaned_parts = [p.replace(':', ' -').replace('؟', '').replace('!', '.') for p in parsed['parts']]
+            parsed['parts'] = cleaned_parts
             return parsed
     except Exception:
       pass
@@ -201,15 +206,15 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
 
   for attempt in range(MAX_RETRIES):
     try:
-      response = make_request_with_retries('post', url, headers=headers, json=payload, timeout=45)
+      response = make_request_with_retries('post', url, headers=headers, json=payload, timeout=30)
       if response.status_code == 200:
         with open(output_filename, 'wb') as f:
           f.write(response.content)
         if os.path.exists(output_filename) and os.path.getsize(output_filename) > 500:
           return
     except Exception as e:
-      logging.warning(f'[TTS Retry {attempt+1}/{MAX_RETRIES}] Failed chunk "{text_chunk[:15]}": {e}')
-    time.sleep(2 * (attempt + 1))
+      logging.warning(f'[TTS Retry {attempt+1}/{MAX_RETRIES}] Failed chunk: {e}')
+    time.sleep(1.0 * (attempt + 1))
   raise Exception(f'TTS failed for chunk: {text_chunk[:15]}')
 
 
@@ -252,7 +257,7 @@ def process_audio_and_subtitles(story_data):
   subtitle_entries = [None] * len(parts)
   durations = [0.0] * len(parts)
 
-  logging.info('⚡ Generating all audio chunks concurrently with robust retries...')
+  logging.info('⚡ Generating all audio chunks concurrently with safe character mapping...')
   with concurrent.futures.ThreadPoolExecutor(max_workers=len(parts)) as executor:
     futures = [executor.submit(process_single_part, i, text, unique_prefix) for i, text in enumerate(parts)]
     for future in concurrent.futures.as_completed(futures):
