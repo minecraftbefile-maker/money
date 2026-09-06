@@ -1,5 +1,7 @@
-token.json
 .env
-__pycache__/
-*.mp4
-*.mp3
+token.json
+client_secrets.json
+backgrounds/
+temp_*.mp4
+temp_*.mp3
+final_shorts_*.mp4
