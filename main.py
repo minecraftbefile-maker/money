@@ -47,8 +47,9 @@ FREE_CHAT_MODELS = [
     'liquid/lfm2.5-2.6b:free',
 ]
 
+# أصوات طبيعية مناسبة للقصص والتشويق لكل لغة
 EDGE_VOICES = {
-    'ar': 'ar-EG-SalmaNeural',
+    'ar': 'ar-SA-HamedNeural',
     'en': 'en-US-ChristopherNeural',
     'es': 'es-ES-AlvaroNeural',
     'ja': 'ja-JP-KeitaNeural',
@@ -92,26 +93,45 @@ def make_request_with_proxy_rotation(method, url, **kwargs):
 
 
 def generate_multilingual_story():
+  story_themes = [
+      'قصة غامضة وقعت في قرية قديمة وتسلّط الضوء على سر لم يُكشف',
+      'موقف إنساني مؤثر وصدمة غير متوقعة في نهاية اللقاء',
+      'لغز تاريخي قصير أو حكاية شعبية مجهولة تحمل عبرة عميقة',
+      'قصة عن ذكاء شخص بسيط استطاع حل مشكلة استعصت على الجميع',
+      'مفارقة غريبة تحدث صدفة وتغير مجرى حياة البطل تماماً',
+      'حكاية من التراث الشعبي بأسلوب حديث يشد المشاهد من أول ثانية',
+  ]
+  selected_theme = random.choice(story_themes)
+  random_id = random.randint(10000, 99999)
+
   prompt = (
-      'اكتب قصة قصيرة ومشوقة جداً لفيديو شورتس مدته دقيقة. '
-      'قسّم القصة لجزئين متساويين (كل جزء حوالي 300-350 حرف). '
-      'أريد القصة بـ 5 لغات: العربية (ar)، الإنجليزية (en)، الأسبانية'
-      ' (es)، اليابانية (ja)، والروسية (ru). '
+      f'أنشئ قصة فريدة كلياً وجديدة تماماً وليست مكررة، مستوحاة من هذا المجال:'
+      f' "{selected_theme}" (رقم مرجعي عشوائي للتنويع: {random_id}).\n'
+      'الشروط:\n'
+      '1. اكتب القصة بأسلوب حكواتي شعبي جذاب وسهل النطق (تجنب تماماً الكلمات'
+      ' المعقدة أو المهجورة التي يخطئ محرك الصوت في قراءتها).\n'
+      '2. ابدأ بـ خطاف (Hook) قوي جداً ومثير في أول سطر لجذب الانتباه فوراً.\n'
+      '3. قسّم القصة لجزئين متساويين (كل جزء حوالي 250-300 حرف).\n'
+      '4. يجب أن يكون العنوان والعقدة مختلفين تماماً عن القصص النمطية'
+      ' المعتادة.\n'
+      '5. أريد القصة بـ 5 لغات: العربية (ar)، الإنجليزية (en)، الأسبانية'
+      ' (es)، اليابانية (ja)، والروسية (ru).\n\n'
       'أرجع الرد بصيغة JSON فقط بهذا التنسيق حصراً وبدون أي كود ماركداون'
       ' إضافي:\n'
       '{\n'
-      '   "ar": {"title": "عنوان القصة", "tags": ["قصص", "shorts"], "parts":'
-      ' ["الجزء1", "الجزء2"]},\n'
-      '   "en": {"title": "Title", "tags": ["story", "shorts"], "parts":'
-      ' ["Part1", "Part2"]},\n'
-      '   "es": {"title": "Título", "tags": ["historias", "shorts"], "parts":'
-      ' ["Parte1", "Parte2"]},\n'
-      '   "ja": {"title": "タイトル", "tags": ["物語", "shorts"], "parts":'
-      ' ["パート1", "パート2"]},\n'
-      '   "ru": {"title": "Заголовок", "tags": ["истории", "shorts"], "parts":'
-      ' ["Часть1", "Часть2"]}\n'
+      '   "ar": {"title": "عنوان فريد ومثير جداً غير مكرر", "tags": ["قصص",'
+      ' "shorts"], "parts": ["الجزء الأول المشوق", "الجزء الثاني والنهاية"]},\n'
+      '   "en": {"title": "Unique Catchy Title", "tags": ["story", "shorts"],'
+      ' "parts": ["Part 1", "Part 2"]},\n'
+      '   "es": {"title": "Título Único", "tags": ["historias", "shorts"],'
+      ' "parts": ["Parte 1", "Parte 2"]},\n'
+      '   "ja": {"title": "ユニークなタイトル", "tags": ["物語", "shorts"],'
+      ' "parts": ["パート1", "パート2"]},\n'
+      '   "ru": {"title": "Уникальный заголовок", "tags": ["истории",'
+      ' "shorts"], "parts": ["Часть 1", "Часть 2"]}\n'
       '}'
   )
+
   headers = {
       'Authorization': f'Bearer {OPENROUTER_API_KEY}',
       'Content-Type': 'application/json',
@@ -121,11 +141,13 @@ def generate_multilingual_story():
 
   last_exception = None
   for model_name in FREE_CHAT_MODELS:
-    logging.info(f'Trying text AI model: {model_name}')
+    logging.info(
+        f'Trying text AI model: {model_name} with unique theme generation'
+    )
     payload = {
         'model': model_name,
         'messages': [{'role': 'user', 'content': prompt}],
-        'temperature': 0.85,
+        'temperature': 0.95,
     }
 
     try:
@@ -371,7 +393,9 @@ def run_pipeline():
   generated_files = []
   try:
     logging.info('====================================')
-    logging.info('Starting automation cycle (Edge TTS)...')
+    logging.info(
+        'Starting multi-language automation cycle (5 Videos / 5 Languages)...'
+    )
     logging.info('====================================')
 
     story_data = generate_multilingual_story()
@@ -390,15 +414,42 @@ def run_pipeline():
     bg_video = download_and_prepare_background()
     generated_files.append(bg_video)
 
-    output_video = f'final_shorts_{uuid.uuid4().hex[:8]}.mp4'
-    render_video_ffmpeg(bg_video, audio_files['ar'], output_video)
-    generated_files.append(output_video)
+    total_langs = len(
+        [l for l in LANGUAGES.keys() if l in story_data and l in audio_files]
+    )
+    current_index = 0
 
-    ar_title = story_data['ar']['title']
-    ar_tags = story_data['ar']['tags']
-    upload_to_youtube(output_video, ar_title, ar_tags)
+    for lang_code, lang_name in LANGUAGES.items():
+      if lang_code in story_data and lang_code in audio_files:
+        current_index += 1
+        logging.info(
+            f'[{current_index}/{total_langs}] Rendering video for:'
+            f' {lang_name} ({lang_code})...'
+        )
 
-    logging.info('Automation cycle completed successfully!')
+        output_video = f'final_shorts_{lang_code}_{uuid.uuid4().hex[:8]}.mp4'
+        render_video_ffmpeg(bg_video, audio_files[lang_code], output_video)
+        generated_files.append(output_video)
+
+        lang_title = story_data[lang_code]['title']
+        lang_tags = story_data[lang_code]['tags']
+
+        upload_to_youtube(output_video, lang_title, lang_tags)
+        logging.info(f'Successfully published [{lang_name}] video!')
+
+        # ديلاي 10 دقائق בדיוק بين كل فيديو لمنع السبام وحماية القناة
+        if current_index < total_langs:
+          delay_seconds = 600  # 10 دقائق
+          logging.info(
+              '⏳ الانتظار لمدة 10 دقائق قبل نشر الفيديو التالي لضمان أمان'
+              ' القناة وتجنب نظام الحظر الآلي...'
+          )
+          time.sleep(delay_seconds)
+
+    logging.info(
+        'All 5 multilingual videos published successfully with 10-minute safe'
+        ' intervals!'
+    )
 
   except Exception as e:
     logging.error(f'Cycle failed: {str(e)}')
