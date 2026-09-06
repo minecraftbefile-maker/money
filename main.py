@@ -41,9 +41,9 @@ BACKGROUND_VIDEO_URL = 'https://ia600403.us.archive.org/32/items/background_2026
 TARGET_DURATION = 45
 PARTS_COUNT = 6
 
-REQUEST_TIMEOUT = 30
+REQUEST_TIMEOUT = 45
 PRECHECK_TIMEOUT = 5
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 
 FREE_CHAT_MODELS = [
     'nvidia/nemotron-3.5-lightning:free',
@@ -76,7 +76,7 @@ def make_request_with_retries(method, url, **kwargs):
       logging.warning(f'[Network Retry {attempt+1}/{max_retries}] Failed for {url}: {e}')
       if attempt == max_retries - 1:
         raise e
-      time.sleep(1)
+      time.sleep(1.5 * (attempt + 1))
 
 
 def get_fast_working_model(headers):
@@ -199,17 +199,17 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
       'response_format': 'mp3'
   }
 
-  for attempt in range(2):
+  for attempt in range(MAX_RETRIES):
     try:
-      response = make_request_with_retries('post', url, headers=headers, json=payload, timeout=30)
+      response = make_request_with_retries('post', url, headers=headers, json=payload, timeout=45)
       if response.status_code == 200:
         with open(output_filename, 'wb') as f:
           f.write(response.content)
         if os.path.exists(output_filename) and os.path.getsize(output_filename) > 500:
           return
-    except Exception:
-      pass
-    time.sleep(1)
+    except Exception as e:
+      logging.warning(f'[TTS Retry {attempt+1}/{MAX_RETRIES}] Failed chunk "{text_chunk[:15]}": {e}')
+    time.sleep(2 * (attempt + 1))
   raise Exception(f'TTS failed for chunk: {text_chunk[:15]}')
 
 
@@ -252,8 +252,7 @@ def process_audio_and_subtitles(story_data):
   subtitle_entries = [None] * len(parts)
   durations = [0.0] * len(parts)
 
-  # Generate all audio chunks concurrently for maximum speed
-  logging.info('⚡ Generating all audio chunks concurrently...')
+  logging.info('⚡ Generating all audio chunks concurrently with robust retries...')
   with concurrent.futures.ThreadPoolExecutor(max_workers=len(parts)) as executor:
     futures = [executor.submit(process_single_part, i, text, unique_prefix) for i, text in enumerate(parts)]
     for future in concurrent.futures.as_completed(futures):
@@ -261,7 +260,6 @@ def process_audio_and_subtitles(story_data):
       part_files[i] = part_name
       durations[i] = duration
       
-      # We calculate absolute times after sorting or accumulating sequentially
   current_time = 0.0
   for i in range(len(parts)):
     start_time_str = format_srt_time(current_time)
@@ -331,7 +329,6 @@ def render_video_with_subtitles(bg_video, main_audio, srt_file, output_video):
   style = "FontName=Arial,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2,Shadow=1,Alignment=10"
   vf_cmd = f"subtitles='{safe_srt}':force_style='{style}'"
 
-  # Using ultrafast preset for maximum video rendering speed
   cmd = [
       FFMPEG_PATH, '-y', 
       '-i', bg_video, 
