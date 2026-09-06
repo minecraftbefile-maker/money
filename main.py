@@ -32,7 +32,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 FISH_AUDIO_API_KEY = os.getenv("FISH_AUDIO_API_KEY")
 BACKGROUND_VIDEO_URL = os.getenv("BACKGROUND_VIDEO_URL", "https://ia600403.us.archive.org/32/items/background_202609/Background.mp4")
 
-TEXT_AI_MODEL = "google/gemma-2-9b-it:free"
+TEXT_AI_MODEL = "google/gemma-4-31b-it:free"
 TTS_MODEL_NAME = "s2.1-pro-free"
 VOICE_MODEL_ID = "55542ca9d06d4111977d1f06c905a3a5"
 
