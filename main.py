@@ -37,7 +37,7 @@ load_dotenv()
 
 # ==================== CONFIGURATION ====================
 SELECTED_LANG = 'ar'
-VOICE_ID = '96d5c38e80a048f590be1af21d30d20c'
+VOICE_ID = '96d5c38e80a048f590be1af21d30d20c'   # Fish Audio voice
 
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 BACKGROUND_VIDEO_URL = 'https://ia600403.us.archive.org/32/items/background_202609/Background.mp4'
@@ -201,7 +201,10 @@ def save_script_to_text_file(story_data):
 
 
 def text_to_speech_fish_audio(text_chunk, output_filename):
-    """Generate speech using Fish Audio via OpenRouter, with rate‑limit handling."""
+    """
+    Attempt TTS using a list of models from OpenRouter.
+    Falls back to the next model if the current one fails after retries.
+    """
     # Normalise and sanitise
     text_chunk = unicodedata.normalize('NFKC', text_chunk)
     text_chunk = ''.join(ch for ch in text_chunk if unicodedata.category(ch)[0] != 'C')
@@ -209,65 +212,84 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
     if not text_chunk:
         raise ValueError("Empty text after sanitization")
 
+    # ---- Model configurations (model name + voice) ----
+    models = [
+        {'model': 'fish-audio/s2.1-pro-free:free', 'voice': VOICE_ID},
+        {'model': 'deepgram/flux-tts:free', 'voice': 'flux-alexis-en'},   # fallback
+        # Add more fallbacks here if desired, e.g. google-tts, etc.
+    ]
+
     url = 'https://openrouter.ai/api/v1/audio/speech'
     headers = {
         'Authorization': f'Bearer {OPENROUTER_API_KEY}',
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://github.com'
     }
-    payload = {
-        'model': 'fish-audio/s2.1-pro-free:free',
-        'input': text_chunk,
-        'voice': VOICE_ID,
-        'response_format': 'mp3'
-    }
 
     last_error = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.post(url, headers=headers, json=payload, timeout=30)
 
-            # ---- Rate‑limit handling ----
-            if response.status_code == 429:
-                reset_timestamp = response.headers.get('X-RateLimit-Reset')
-                remaining = response.headers.get('X-RateLimit-Remaining', '0')
-                limit = response.headers.get('X-RateLimit-Limit', '?')
-                logging.warning(
-                    f'Rate limit hit (remaining {remaining}/{limit}). '
-                    f'Reset at {reset_timestamp} (epoch ms)'
-                )
-                if reset_timestamp:
-                    reset_epoch = int(reset_timestamp) / 1000.0   # convert ms to seconds
-                    now = time.time()
-                    wait_seconds = max(0, reset_epoch - now) + 1  # +1 for safety
-                    if wait_seconds > 1:
-                        wait_minutes = wait_seconds / 60
-                        logging.info(f'Sleeping for {wait_minutes:.1f} minutes until rate limit resets...')
-                        time.sleep(wait_seconds)
-                        # After sleeping, retry (continue loop)
-                        continue
-                # If no reset header, use exponential backoff
-                time.sleep((2 ** attempt) * 2)
-                continue
+    for model_config in models:
+        model_name = model_config['model']
+        voice = model_config['voice']
 
-            if response.status_code == 200:
-                if len(response.content) > 500:
-                    with open(output_filename, 'wb') as f:
-                        f.write(response.content)
-                    logging.info(f'TTS success for chunk: {text_chunk[:30]}...')
-                    return
+        logging.info(f'Trying TTS model: {model_name} with voice: {voice}')
+
+        payload = {
+            'model': model_name,
+            'input': text_chunk,
+            'voice': voice,
+            'response_format': 'mp3'
+        }
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=30)
+
+                # ---- Rate‑limit handling ----
+                if response.status_code == 429:
+                    reset_timestamp = response.headers.get('X-RateLimit-Reset')
+                    remaining = response.headers.get('X-RateLimit-Remaining', '0')
+                    limit = response.headers.get('X-RateLimit-Limit', '?')
+                    logging.warning(
+                        f'Rate limit hit for {model_name} (remaining {remaining}/{limit}). '
+                        f'Reset at {reset_timestamp} (epoch ms)'
+                    )
+                    if reset_timestamp:
+                        reset_epoch = int(reset_timestamp) / 1000.0   # convert ms to seconds
+                        now = time.time()
+                        wait_seconds = max(0, reset_epoch - now) + 1  # +1 for safety
+                        if wait_seconds > 1:
+                            wait_minutes = wait_seconds / 60
+                            logging.info(f'Sleeping for {wait_minutes:.1f} minutes until rate limit resets...')
+                            time.sleep(wait_seconds)
+                            # After sleeping, retry (continue loop)
+                            continue
+                    # If no reset header, use exponential backoff
+                    time.sleep((2 ** attempt) * 2)
+                    continue
+
+                if response.status_code == 200:
+                    if len(response.content) > 500:
+                        with open(output_filename, 'wb') as f:
+                            f.write(response.content)
+                        logging.info(f'TTS succeeded with {model_name} for chunk: {text_chunk[:30]}...')
+                        return   # success, exit function
+                    else:
+                        logging.warning(f'TTS returned tiny file ({len(response.content)} bytes) for chunk: {text_chunk[:30]}')
                 else:
-                    logging.warning(f'TTS returned tiny file ({len(response.content)} bytes) for chunk: {text_chunk[:30]}')
-            else:
-                error_body = response.text[:300]
-                logging.error(f'TTS API error {response.status_code}: {error_body}')
-                last_error = f"Status {response.status_code}: {error_body}"
-        except Exception as e:
-            logging.warning(f'TTS attempt {attempt+1} failed: {e}')
-            last_error = str(e)
-        time.sleep((attempt + 1) * 1.5)
+                    error_body = response.text[:300]
+                    logging.error(f'TTS API error {response.status_code} for {model_name}: {error_body}')
+                    last_error = f"Status {response.status_code}: {error_body}"
+            except Exception as e:
+                logging.warning(f'TTS attempt {attempt+1} with {model_name} failed: {e}')
+                last_error = str(e)
+            time.sleep((attempt + 1) * 1.5)
 
-    raise Exception(f'TTS failed for chunk: "{text_chunk[:50]}" after {MAX_RETRIES} attempts. Last error: {last_error}')
+        # If we exit the retry loop for this model, log and move to the next
+        logging.warning(f'All retries failed for model {model_name}, trying next fallback...')
+
+    # ---- If all models fail, raise exception (will be caught by process_single_part) ----
+    raise Exception(f'TTS failed for chunk: "{text_chunk[:50]}" after trying all models. Last error: {last_error}')
 
 
 def format_srt_time(seconds):
