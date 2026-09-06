@@ -2,7 +2,8 @@ name: Automated YouTube Shorts Pipeline
 
 on:
   schedule:
-    - cron: '0 */8 * * *'
+    # Runs every 6 hours
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -10,33 +11,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
-        cache: 'pip'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
 
-    - name: Install system dependencies (FFmpeg)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests google-api-python-client google-auth-oauthlib python-dotenv imageio-ffmpeg edge-tts
 
-    - name: Install Python dependencies
-      run: |
-        pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run main script
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          BACKGROUND_VIDEO_URL: ${{ secrets.BACKGROUND_VIDEO_URL }}
+          CLIENT_SECRETS_JSON: ${{ secrets.CLIENT_SECRETS_JSON }}
+          TOKEN_JSON: ${{ secrets.TOKEN_JSON }}
+        run: |
+          # Reconstruct client_secrets.json and token.json from secrets if present
+          if [ -n "$CLIENT_SECRETS_JSON" ]; then
+            echo "$CLIENT_SECRETS_JSON" > client_secrets.json
+          fi
+          if [ -n "$TOKEN_JSON" ]; then
+            echo "$TOKEN_JSON" > token.json
+          fi
 
-    - name: Restore YouTube Token
-      run: |
-        echo '${{ secrets.TOKEN_JSON }}' > token.json
-
-    - name: Run Python Automation Script
-      env:
-        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        FISH_AUDIO_API_KEY: ${{ secrets.FISH_AUDIO_API_KEY }}
-        BACKGROUND_VIDEO_URL: ${{ secrets.BACKGROUND_VIDEO_URL }}
-      run: |
-        python3 main.py
+          python3 main.py
