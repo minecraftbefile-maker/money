@@ -51,12 +51,27 @@ LANGUAGES = {
 }
 
 def make_request_with_proxy_rotation(method, url, **kwargs):
-    try:
-        response = requests.request(method, url, **kwargs)
-        return response
-    except Exception as e:
-        logging.warning(f"Direct request failed for {url}: {e}")
-        raise e
+    """
+    تنفذ الاتصالات بالشبكة مع نظام إعادة محاولة تصاعدي لتجاوز انقطاعات الـ DNS
+    وأخطاء الخوادم العابرة في GitHub Actions.
+    """
+    max_retries = 5
+    kwargs.setdefault('timeout', 45)
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.request(method, url, **kwargs)
+            if response.status_code >= 500:
+                response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"[Network/DNS Retry {attempt+1}/{max_retries}] Failed for {url}: {e}")
+            if attempt == max_retries - 1:
+                logging.error(f"[Fatal Error] All {max_retries} connection attempts failed.")
+                raise e
+            sleep_time = 5 * (attempt + 1)
+            logging.info(f"Waiting {sleep_time} seconds before retrying...")
+            time.sleep(sleep_time)
 
 def retry_request(func, *args, retries=3, backoff=2, **kwargs):
     last_exception = None
@@ -65,7 +80,7 @@ def retry_request(func, *args, retries=3, backoff=2, **kwargs):
             return func(*args, **kwargs)
         except Exception as e:
             last_exception = e
-            logging.warning(f"Attempt {attempt+1}/{retries} failed: {e}")
+            logging.warning(f"[Logic Attempt {attempt+1}/{retries}] Failed: {e}")
             if attempt < retries - 1:
                 time.sleep(backoff ** attempt)
     raise last_exception
@@ -200,7 +215,7 @@ def download_and_prepare_background():
     logging.info("Downloading background video from Internet Archive...")
     source_video = f"source_bg_{uuid.uuid4().hex[:8]}.mp4"
     
-    response = requests.get(BACKGROUND_VIDEO_URL, stream=True, timeout=120)
+    response = make_request_with_proxy_rotation("get", BACKGROUND_VIDEO_URL, stream=True, timeout=120)
     if response.status_code != 200:
         raise Exception(f"Failed to download background video, status code: {response.status_code}")
     
