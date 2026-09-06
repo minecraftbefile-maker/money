@@ -181,7 +181,7 @@ def generate_multilingual_story():
 def save_scripts_to_text_file(story_data):
   with open(SCRIPT_FILE, 'w', encoding='utf-8') as f:
     f.write('===================================================\n')
-    f.write('TTS ENGINE: Fish Audio S21 Pro (OpenRouter Free API)\n')
+    f.write('TTS ENGINE: Fish Audio S2.1 Pro (OpenRouter Free API)\n')
     f.write('===================================================\n\n')
     for lang_code, lang_name in LANGUAGES.items():
       if lang_code in story_data:
@@ -196,6 +196,8 @@ def save_scripts_to_text_file(story_data):
 
 
 def text_to_speech_fish_audio(text_chunk, output_filename, lang_code):
+  url = 'https://openrouter.ai/api/v1/audio/speech'
+  
   headers = {
       'Authorization': f'Bearer {OPENROUTER_API_KEY}',
       'Content-Type': 'application/json',
@@ -203,41 +205,42 @@ def text_to_speech_fish_audio(text_chunk, output_filename, lang_code):
       'X-Title': 'Tales AI Generator',
   }
   
-  # استخدام نموذج Fish Audio S21 Pro المجاني عبر واجهة محادثة وتوليد الصوت
+  # خريطة معرفات الأصوات الذكية المحددة لكل لغة بدقة
+  voice_mapping = {
+      'en': '802e3bc2b27e49c2995d23ef70e6ac89',  # Energetic Male
+      'es': 'ac08f37a05244660ba10fa0f9f0e35ca',  # Professional Spanish Male
+      'ar': '9a996dd8d26d4c7394c9169291cbfa9a',  # رجل عربي ضخم وعميق
+      'ru': 'fd37e8632341484fbb41fb8fef3039a5',  # Молодой Драматичный
+      'ja': '933563129e564b19a115bedd57b7406a',  # Official Japanese Male
+  }
+  
+  selected_voice = voice_mapping.get(lang_code, '802e3bc2b27e49c2995d23ef70e6ac89')
+
   payload = {
-      'model': 'fish-audio/s21-pro-free:free',
-      'messages': [
-          {
-              'role': 'user', 
-              'content': f'Convert the following text into spoken audio strictly in language {lang_code}. Read this text naturally with a human-like voice: {text_chunk}'
-          }
-      ]
+      'model': 'fish-audio/s2.1-pro-free:free',
+      'input': text_chunk,
+      'voice': selected_voice,
+      'response_format': 'mp3'
   }
 
   for attempt in range(3):
     try:
       response = make_request_with_proxy_rotation(
           'post',
-          'https://openrouter.ai/api/v1/chat/completions',
+          url,
           headers=headers,
           json=payload,
           timeout=90,
       )
       
       if response.status_code == 200:
-        # إذا كان الموديل يرجع محتوى صوتي أو بيانات مرتبطة، يتم التعامل معها
-        # بما أننا نعتمد على استجابة الـ OpenRouter الحالية، نقوم بحفظ النتيجة المباشرة
-        res_json = response.json()
-        if 'choices' in res_json and res_json['choices']:
-          # استخراج النص أو المادة الصوتية المعادة
-          audio_content = res_json['choices'][0]['message'].get('content', '')
-          # لو كان الـ API يعيد بايتات صوتية مباشرة أو رابط ملف صوتي:
-          with open(output_filename, 'wb') as f:
-            f.write(response.content)
+        with open(output_filename, 'wb') as f:
+          f.write(response.content)
             
-          if os.path.exists(output_filename) and os.path.getsize(output_filename) > 1000:
-            logging.info(f'[Fish Audio S21] Audio chunk generated successfully for {lang_code}')
-            return
+        if os.path.exists(output_filename) and os.path.getsize(output_filename) > 1000:
+          logging.info(f'[Fish Audio S2.1] Audio generated for [{lang_code}] using voice {selected_voice}')
+          return
+          
     except Exception as e:
       logging.warning(f'[Fish Audio Attempt {attempt+1}] Error for {lang_code}: {e}')
     time.sleep(3)
@@ -426,7 +429,7 @@ def run_pipeline():
   generated_files = []
   try:
     logging.info('====================================')
-    logging.info('Starting Multi-Language Pipeline with Fish Audio S21 Pro...')
+    logging.info('Starting Multi-Language Pipeline with Fish Audio S2.1 Pro...')
     logging.info('====================================')
 
     story_data = generate_multilingual_story()
@@ -435,7 +438,7 @@ def run_pipeline():
     audio_files = {}
     for lang_code in LANGUAGES.keys():
       if lang_code in story_data:
-        logging.info(f'Generating long speech for [{lang_code}] via Fish Audio S21 Pro...')
+        logging.info(f'Generating long speech for [{lang_code}] via Fish Audio S2.1 Pro...')
         audio_file = process_audio_for_language(story_data[lang_code], lang_code)
         audio_files[lang_code] = audio_file
         generated_files.append(audio_file)
