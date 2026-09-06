@@ -1,0 +1,5 @@
+token.json
+.env
+__pycache__/
+*.mp4
+*.mp3
