@@ -1,4 +1,45 @@
-name: Auto YouTube Shorts Runner
+name: Automated YouTube Shorts Pipeline
+
+on:
+  schedule:
+    - cron: '0 */8 * * *' # يعمل تلقائياً كل 8 ساعات
+  workflow_dispatch: # زر للتشغيل اليدوي من متصفحك متى شئت
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install system dependencies (FFmpeg)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Restore YouTube Token
+      run: |
+        echo '${{ secrets.TOKEN_JSON }}' > token.json
+
+    - name: Run Python Automation Script
+      env:
+        OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        FISH_AUDIO_API_KEY: ${{ secrets.FISH_AUDIO_API_KEY }}
+        BACKGROUND_VIDEO_URL: ${{ secrets.BACKGROUND_VIDEO_URL }}
+      run: |
+        python3 main.pyname: Auto YouTube Shorts Runner
 
 on:
   schedule:
