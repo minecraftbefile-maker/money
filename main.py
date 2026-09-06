@@ -3,16 +3,19 @@ import random
 import subprocess
 import requests
 import json
+import time
 import sys
 import traceback
 import logging
 import glob
-import uuid
 import imageio_ffmpeg
+from dotenv import load_dotenv
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import uuid
 
 FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
 
@@ -23,16 +26,19 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+load_dotenv()
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 FISH_AUDIO_API_KEY = os.getenv("FISH_AUDIO_API_KEY")
+BACKGROUND_VIDEO_URL = os.getenv("BACKGROUND_VIDEO_URL", "https://ia600403.us.archive.org/32/items/background_202609/Background.mp4")
 
 TEXT_AI_MODEL = "google/gemma-2-9b-it:free"
 TTS_MODEL_NAME = "s2.1-pro-free"
 VOICE_MODEL_ID = "55542ca9d06d4111977d1f06c905a3a5"
 
-BACKGROUND_DIR = "backgrounds"
 TOKEN_FILE = 'token.json'
 SCRIPT_FILE = 'video_scripts.txt'
+CLIENT_SECRETS_FILE = 'client_secrets.json'
 
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
 
@@ -44,6 +50,14 @@ LANGUAGES = {
     "ru": "الروسية (Russian)"
 }
 
+def make_request_with_proxy_rotation(method, url, **kwargs):
+    try:
+        response = requests.request(method, url, **kwargs)
+        return response
+    except Exception as e:
+        logging.warning(f"Direct request failed for {url}: {e}")
+        raise e
+
 def retry_request(func, *args, retries=3, backoff=2, **kwargs):
     last_exception = None
     for attempt in range(retries):
@@ -53,7 +67,6 @@ def retry_request(func, *args, retries=3, backoff=2, **kwargs):
             last_exception = e
             logging.warning(f"Attempt {attempt+1}/{retries} failed: {e}")
             if attempt < retries - 1:
-                import time
                 time.sleep(backoff ** attempt)
     raise last_exception
 
@@ -64,11 +77,11 @@ def generate_multilingual_story():
         "أريد القصة بـ 5 لغات: العربية (ar)، الإنجليزية (en)، الأسبانية (es)، اليابانية (ja)، والروسية (ru). "
         "أرجع الرد بصيغة JSON فقط بهذا التنسيق حصراً وبدون أي كود ماركداون إضافي:\n"
         "{\n"
-        '  "ar": {"title": "عنوان القصة", "tags": ["قصص", "shorts"], "parts": ["الجزء1", "الجزء2"]},\n'
-        '  "en": {"title": "Title", "tags": ["story", "shorts"], "parts": ["Part1", "Part2"]},\n'
-        '  "es": {"title": "Título", "tags": ["historias", "shorts"], "parts": ["Parte1", "Parte2"]},\n'
-        '  "ja": {"title": "タイトル", "tags": ["物語", "shorts"], "parts": ["パート1", "パート2"]},\n'
-        '  "ru": {"title": "Заголовок", "tags": ["истории", "shorts"], "parts": ["Часть1", "Часть2"]}\n'
+        '   "ar": {"title": "عنوان القصة", "tags": ["قصص", "shorts"], "parts": ["الجزء1", "الجزء2"]},\n'
+        '   "en": {"title": "Title", "tags": ["story", "shorts"], "parts": ["Part1", "Part2"]},\n'
+        '   "es": {"title": "Título", "tags": ["historias", "shorts"], "parts": ["Parte1", "Parte2"]},\n'
+        '   "ja": {"title": "タイトル", "tags": ["物語", "shorts"], "parts": ["パート1", "パート2"]},\n'
+        '   "ru": {"title": "Заголовок", "tags": ["истории", "shorts"], "parts": ["Часть1", "Часть2"]}\n'
         "}"
     )
     headers = {
@@ -84,7 +97,8 @@ def generate_multilingual_story():
     }
 
     def _call_api():
-        response = requests.post(
+        response = make_request_with_proxy_rotation(
+            "post",
             "https://api.openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload,
@@ -101,18 +115,7 @@ def generate_multilingual_story():
     response_text = response_json['choices'][0]['message']['content'].strip()
     response_text = response_text.replace("```json", "").replace("```", "").strip()
 
-    try:
-        story_data = json.loads(response_text)
-    except json.JSONDecodeError as e:
-        raise Exception(f"Failed to parse JSON from AI: {e}\nResponse: {response_text}")
-
-    for lang_code in LANGUAGES.keys():
-        if lang_code not in story_data:
-            raise Exception(f"Missing language '{lang_code}' in AI response")
-        lang_data = story_data[lang_code]
-        if not isinstance(lang_data, dict) or 'parts' not in lang_data:
-            raise Exception(f"Language '{lang_code}' missing required structure")
-
+    story_data = json.loads(response_text)
     return story_data
 
 def save_scripts_to_text_file(story_data):
@@ -144,7 +147,8 @@ def text_to_speech_fish(text_chunk, output_filename):
     }
 
     def _call_api():
-        response = requests.post(
+        response = make_request_with_proxy_rotation(
+            "post",
             "https://api.fish.audio/v1/tts",
             headers=headers,
             json=payload,
@@ -189,19 +193,25 @@ def process_audio_for_language(lang_data, lang_code):
         if 'list_file' in locals() and os.path.exists(list_file):
             os.remove(list_file)
 
-def get_random_background():
-    if not os.path.exists(BACKGROUND_DIR):
-        os.makedirs(BACKGROUND_DIR)
-        raise Exception(f"Folder '{BACKGROUND_DIR}' does not exist.")
+def download_and_prepare_background():
+    if not BACKGROUND_VIDEO_URL:
+        raise Exception("BACKGROUND_VIDEO_URL is missing!")
+    
+    logging.info("Downloading background video from Internet Archive...")
+    source_video = f"source_bg_{uuid.uuid4().hex[:8]}.mp4"
+    
+    response = requests.get(BACKGROUND_VIDEO_URL, stream=True, timeout=120)
+    if response.status_code != 200:
+        raise Exception(f"Failed to download background video, status code: {response.status_code}")
+    
+    with open(source_video, 'wb') as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
 
-    videos = [f for f in os.listdir(BACKGROUND_DIR) if f.endswith(('.mp4', '.mov', '.mkv'))]
-    if not videos:
-        raise Exception("No background videos found in backgrounds folder!")
-
-    chosen_long_video = os.path.join(BACKGROUND_DIR, random.choice(videos))
     duration = 4200.0
     try:
-        cmd_probe = [FFMPEG_PATH, '-i', chosen_long_video]
+        cmd_probe = [FFMPEG_PATH, '-i', source_video]
         result = subprocess.run(cmd_probe, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
         for line in result.stderr.splitlines():
             if "Duration:" in line:
@@ -218,13 +228,17 @@ def get_random_background():
     cmd_cut = [
         FFMPEG_PATH, '-y',
         '-ss', str(start_time),
-        '-i', chosen_long_video,
+        '-i', source_video,
         '-t', '60',
         '-c:v', 'libx264',
         '-c:a', 'aac',
         output_slice
     ]
     subprocess.run(cmd_cut, check=True, capture_output=True)
+    
+    if os.path.exists(source_video):
+        os.remove(source_video)
+        
     return output_slice
 
 def render_video_ffmpeg(bg_video, main_audio, output_video):
@@ -248,7 +262,12 @@ def get_youtube_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            raise Exception("Missing or invalid YouTube token.json file!")
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                raise Exception(f"Missing {CLIENT_SECRETS_FILE}")
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(TOKEN_FILE, 'w') as token:
+            token.write(creds.to_json())
     return build('youtube', 'v3', credentials=creds)
 
 def upload_to_youtube(video_path, title, tags):
@@ -276,7 +295,7 @@ def run_pipeline():
     generated_files = []
     try:
         logging.info("====================================")
-        logging.info("Starting automation cycle...")
+        logging.info("Starting new automation cycle...")
         logging.info("====================================")
 
         story_data = generate_multilingual_story()
@@ -289,7 +308,7 @@ def run_pipeline():
                 audio_files[lang_code] = audio_file
                 generated_files.append(audio_file)
 
-        bg_video = get_random_background()
+        bg_video = download_and_prepare_background()
         generated_files.append(bg_video)
 
         output_video = f"final_shorts_{uuid.uuid4().hex[:8]}.mp4"
@@ -305,7 +324,6 @@ def run_pipeline():
     except Exception as e:
         logging.error(f"Cycle failed: {str(e)}")
         logging.error(traceback.format_exc())
-        raise e
     finally:
         for f in generated_files:
             if os.path.exists(f):
@@ -313,7 +331,7 @@ def run_pipeline():
                     os.remove(f)
                 except OSError:
                     pass
-        for pattern in ["temp_*.mp4", "temp_*.mp3", "final_audio_*.mp3", "final_shorts_*.mp4", "list_*.txt"]:
+        for pattern in ["temp_*.mp4", "temp_*.mp3", "final_audio_*.mp3", "final_shorts_*.mp4", "list_*.txt", "source_bg_*.mp4"]:
             for f in glob.glob(pattern):
                 try:
                     os.remove(f)
