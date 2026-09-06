@@ -51,10 +51,6 @@ LANGUAGES = {
 }
 
 def make_request_with_proxy_rotation(method, url, **kwargs):
-    """
-    تنفذ الاتصالات بالشبكة مع نظام إعادة محاولة تصاعدي لتجاوز انقطاعات الـ DNS
-    وأخطاء الخوادم العابرة في GitHub Actions.
-    """
     max_retries = 5
     kwargs.setdefault('timeout', 45)
     
@@ -114,7 +110,7 @@ def generate_multilingual_story():
     def _call_api():
         response = make_request_with_proxy_rotation(
             "post",
-            "https://api.openrouter.ai/api/v1/chat/completions",
+            "https://openrouter.ai/api/v1/chat/completions",
             headers=headers,
             json=payload,
             timeout=60
