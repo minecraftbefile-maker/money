@@ -12,7 +12,8 @@ import traceback
 import uuid
 import math
 import textwrap
-import unicodedata          # <-- added for sanitisation
+import unicodedata
+from datetime import datetime, timedelta
 
 import imageio_ffmpeg
 from dotenv import load_dotenv
@@ -179,9 +180,7 @@ def generate_story():
                 if start_idx != -1 and end_idx != -1:
                     parsed = json.loads(text[start_idx:end_idx+1])
                     if 'parts' in parsed and len(parsed['parts']) > 0:
-                        # Clean up problematic characters from text chunks
                         cleaned_parts = [p.replace(':', ' -').replace('؟', '').replace('!', '.') for p in parsed['parts']]
-                        # Ensure each part ends with a punctuation mark (add a period if missing)
                         for i, p in enumerate(cleaned_parts):
                             if p and p[-1] not in '.!?،':
                                 cleaned_parts[i] = p + '.'
@@ -202,9 +201,9 @@ def save_script_to_text_file(story_data):
 
 
 def text_to_speech_fish_audio(text_chunk, output_filename):
+    """Generate speech using Fish Audio via OpenRouter, with rate‑limit handling."""
     # Normalise and sanitise
     text_chunk = unicodedata.normalize('NFKC', text_chunk)
-    # Remove control characters (category 'C')
     text_chunk = ''.join(ch for ch in text_chunk if unicodedata.category(ch)[0] != 'C')
     text_chunk = text_chunk.strip()
     if not text_chunk:
@@ -227,6 +226,30 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.post(url, headers=headers, json=payload, timeout=30)
+
+            # ---- Rate‑limit handling ----
+            if response.status_code == 429:
+                reset_timestamp = response.headers.get('X-RateLimit-Reset')
+                remaining = response.headers.get('X-RateLimit-Remaining', '0')
+                limit = response.headers.get('X-RateLimit-Limit', '?')
+                logging.warning(
+                    f'Rate limit hit (remaining {remaining}/{limit}). '
+                    f'Reset at {reset_timestamp} (epoch ms)'
+                )
+                if reset_timestamp:
+                    reset_epoch = int(reset_timestamp) / 1000.0   # convert ms to seconds
+                    now = time.time()
+                    wait_seconds = max(0, reset_epoch - now) + 1  # +1 for safety
+                    if wait_seconds > 1:
+                        wait_minutes = wait_seconds / 60
+                        logging.info(f'Sleeping for {wait_minutes:.1f} minutes until rate limit resets...')
+                        time.sleep(wait_seconds)
+                        # After sleeping, retry (continue loop)
+                        continue
+                # If no reset header, use exponential backoff
+                time.sleep((2 ** attempt) * 2)
+                continue
+
             if response.status_code == 200:
                 if len(response.content) > 500:
                     with open(output_filename, 'wb') as f:
@@ -236,7 +259,6 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
                 else:
                     logging.warning(f'TTS returned tiny file ({len(response.content)} bytes) for chunk: {text_chunk[:30]}')
             else:
-                # Log the actual API error
                 error_body = response.text[:300]
                 logging.error(f'TTS API error {response.status_code}: {error_body}')
                 last_error = f"Status {response.status_code}: {error_body}"
@@ -245,7 +267,6 @@ def text_to_speech_fish_audio(text_chunk, output_filename):
             last_error = str(e)
         time.sleep((attempt + 1) * 1.5)
 
-    # If we reach here, all retries failed
     raise Exception(f'TTS failed for chunk: "{text_chunk[:50]}" after {MAX_RETRIES} attempts. Last error: {last_error}')
 
 
@@ -275,7 +296,6 @@ def process_single_part(i, text, unique_prefix):
         text_to_speech_fish_audio(text, part_name)
     except Exception as e:
         logging.error(f'TTS failed for part {i+1}: {e}. Creating silent audio placeholder.')
-        # Generate a 2‑second silent MP3 using ffmpeg
         subprocess.run(
             [FFMPEG_PATH, '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '2', '-q:a', '2', part_name],
             check=True,
@@ -297,14 +317,26 @@ def process_audio_and_subtitles(story_data):
     subtitle_entries = [None] * len(parts)
     durations = [0.0] * len(parts)
 
-    logging.info('⚡ Generating all audio chunks concurrently with safe character mapping...')
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(parts)) as executor:
-        futures = [executor.submit(process_single_part, i, text, unique_prefix) for i, text in enumerate(parts)]
-        for future in concurrent.futures.as_completed(futures):
-            i, part_name, duration, wrapped_text = future.result()
-            part_files[i] = part_name
-            durations[i] = duration
-            
+    # --- Process TTS sequentially to avoid rate limits ---
+    logging.info('⚡ Generating audio chunks sequentially to respect rate limits...')
+    for i, text in enumerate(parts):
+        part_name = f'temp_{SELECTED_LANG}_{i+1}_{unique_prefix}.mp3'
+        try:
+            text_to_speech_fish_audio(text, part_name)
+        except Exception as e:
+            logging.error(f'TTS failed for part {i+1}: {e}. Creating silent audio placeholder.')
+            subprocess.run(
+                [FFMPEG_PATH, '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '2', '-q:a', '2', part_name],
+                check=True,
+                capture_output=True
+            )
+        duration = get_audio_duration(part_name)
+        part_files[i] = part_name
+        durations[i] = duration
+        wrapped_text = "\n".join(textwrap.wrap(text, width=30))
+        # small delay between requests to avoid burst
+        time.sleep(0.5)
+
     current_time = 0.0
     for i in range(len(parts)):
         start_time_str = format_srt_time(current_time)
